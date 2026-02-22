@@ -81,38 +81,66 @@ static DEFINE_MUTEX(g_exec_mutex);
 
 /* -------------------- FIFO queue helpers -------------------- */
 
+static void spibridge_queue_exit(u64 my_ticket);
+
 static int spibridge_queue_enter(u64 *ticket_out)
 {
 	u64 my_ticket = (u64)atomic64_fetch_inc(&g_next_ticket);
+	int pending_err = 0;
 
 	*ticket_out = my_ticket;
 
 	if (debug)
 		pr_info("spibridge: ticket %llu acquired\n", my_ticket);
 
-	if (timeout_ms <= 0) {
-		int rc = wait_event_interruptible(g_wq, (u64)atomic64_read(&g_serving) == my_ticket);
-		if (debug)
-			pr_info("spibridge: ticket %llu wait returned rc=%d\n", my_ticket, rc);
-		return rc; /* 0 or -ERESTARTSYS */
-	}
+	for (;;) {
+		long rc;
 
-	{
-		long t = msecs_to_jiffies(timeout_ms);
-		long rc = wait_event_interruptible_timeout(
-			g_wq,
-			(u64)atomic64_read(&g_serving) == my_ticket,
-			t
-		);
+		if ((u64)atomic64_read(&g_serving) == my_ticket)
+			break;
 
-		if (rc > 0)
+		if (timeout_ms <= 0) {
+			rc = wait_event_interruptible(
+				g_wq,
+				(u64)atomic64_read(&g_serving) == my_ticket
+			);
+		} else {
+			rc = wait_event_interruptible_timeout(
+				g_wq,
+				(u64)atomic64_read(&g_serving) == my_ticket,
+				msecs_to_jiffies(timeout_ms)
+			);
+		}
+
+		if ((u64)atomic64_read(&g_serving) == my_ticket)
+			break;
+
+		if (rc == 0) {
+			if (!pending_err)
+				pending_err = -ETIMEDOUT;
 			if (debug)
-				pr_info("spibridge: ticket %llu granted (timeout)\n", my_ticket);
-			return 0;
-		if (rc == 0)
-			return -ETIMEDOUT;
-		return (int)rc; /* -ERESTARTSYS */
+				pr_info("spibridge: ticket %llu timeout while queued, waiting to retire ticket\n", my_ticket);
+			continue;
+		}
+
+		if (rc < 0) {
+			if (!pending_err)
+				pending_err = (int)rc;
+			if (debug)
+				pr_info("spibridge: ticket %llu interrupted rc=%ld while queued, waiting to retire ticket\n", my_ticket, rc);
+			continue;
+		}
 	}
+
+	if (debug)
+		pr_info("spibridge: ticket %llu granted\n", my_ticket);
+
+	if (pending_err) {
+		spibridge_queue_exit(my_ticket);
+		return pending_err;
+	}
+
+	return 0;
 }
 
 static void spibridge_queue_exit(u64 my_ticket)
@@ -210,25 +238,11 @@ static ssize_t spibridge_read(struct file *file, char __user *buf, size_t len, l
 	if (!fh || !fh->backing_filp)
 		return -ENODEV;
 
-	if (debug) {
-		int dev_minor = MINOR(file->f_inode->i_rdev);
-		pr_info("spibridge[%d][pid=%d]: requesting ticket for read len=%zu\n", dev_minor, current->pid, len);
-	}
-
 	rc = spibridge_queue_enter(&ticket);
 	if (rc)
 		return rc;
 
-	if (debug) {
-		int dev_minor = MINOR(file->f_inode->i_rdev);
-		pr_info("spibridge[%d][pid=%d]: ticket %llu granted for read len=%zu\n", dev_minor, current->pid, ticket, len);
-	}
-
 	mutex_lock(&g_exec_mutex);
-	if (debug) {
-		int dev_minor = MINOR(file->f_inode->i_rdev);
-		pr_info("spibridge[%d][pid=%d]: entering critical read section\n", dev_minor, current->pid);
-	}
 	{
 		size_t remaining = len;
 		size_t chunk;
@@ -246,17 +260,7 @@ static ssize_t spibridge_read(struct file *file, char __user *buf, size_t len, l
 				break;
 			}
 
-			if (debug) {
-				int dev_minor = MINOR(file->f_inode->i_rdev);
-				pr_info("spibridge[%d][pid=%d]: kernel_read chunk=%zu backing_pos=%lld\n", dev_minor, current->pid, chunk, (long long)backing_pos);
-			}
-
 			got = kernel_read(fh->backing_filp, kbuf, chunk, &backing_pos);
-
-			if (debug) {
-				int dev_minor = MINOR(file->f_inode->i_rdev);
-				pr_info("spibridge[%d][pid=%d]: kernel_read returned %zd backing_pos=%lld\n", dev_minor, current->pid, got, (long long)backing_pos);
-			}
 			if (got < 0) {
 				kfree(kbuf);
 				ret = got;
@@ -276,10 +280,6 @@ static ssize_t spibridge_read(struct file *file, char __user *buf, size_t len, l
 			remaining -= got;
 		}
 	}
-	if (debug) {
-		int dev_minor = MINOR(file->f_inode->i_rdev);
-		pr_info("spibridge[%d][pid=%d]: leaving critical read section ret=%zd\n", dev_minor, current->pid, ret);
-	}
 	mutex_unlock(&g_exec_mutex);
 
 	spibridge_queue_exit(ticket);
@@ -296,25 +296,11 @@ static ssize_t spibridge_write(struct file *file, const char __user *buf, size_t
 	if (!fh || !fh->backing_filp)
 		return -ENODEV;
 
-	if (debug) {
-		int dev_minor = MINOR(file->f_inode->i_rdev);
-		pr_info("spibridge[%d][pid=%d]: requesting ticket for write len=%zu\n", dev_minor, current->pid, len);
-	}
-
 	rc = spibridge_queue_enter(&ticket);
 	if (rc)
 		return rc;
 
-	if (debug) {
-		int dev_minor = MINOR(file->f_inode->i_rdev);
-		pr_info("spibridge[%d][pid=%d]: ticket %llu granted for write len=%zu\n", dev_minor, current->pid, ticket, len);
-	}
-
 	mutex_lock(&g_exec_mutex);
-	if (debug) {
-		int dev_minor = MINOR(file->f_inode->i_rdev);
-		pr_info("spibridge[%d][pid=%d]: entering critical write section\n", dev_minor, current->pid);
-	}
 	{
 		size_t remaining = len;
 		size_t chunk;
@@ -338,17 +324,7 @@ static ssize_t spibridge_write(struct file *file, const char __user *buf, size_t
 				break;
 			}
 
-			if (debug) {
-				int dev_minor = MINOR(file->f_inode->i_rdev);
-				pr_info("spibridge[%d][pid=%d]: kernel_write chunk=%zu backing_pos=%lld\n", dev_minor, current->pid, chunk, (long long)backing_pos);
-			}
-
 			wrote = kernel_write(fh->backing_filp, kbuf, chunk, &backing_pos);
-
-			if (debug) {
-				int dev_minor = MINOR(file->f_inode->i_rdev];
-				pr_info("spibridge[%d][pid=%d]: kernel_write returned %zd backing_pos=%lld\n", dev_minor, current->pid, wrote, (long long)backing_pos);
-			}
 			kfree(kbuf);
 			if (wrote < 0) {
 				ret = wrote;
@@ -360,10 +336,6 @@ static ssize_t spibridge_write(struct file *file, const char __user *buf, size_t
 				break; /* short write */
 			remaining -= wrote;
 		}
-	}
-	if (debug) {
-		int dev_minor = MINOR(file->f_inode->i_rdev);
-		pr_info("spibridge[%d][pid=%d]: leaving critical write section ret=%zd\n", dev_minor, current->pid, ret);
 	}
 	mutex_unlock(&g_exec_mutex);
 
