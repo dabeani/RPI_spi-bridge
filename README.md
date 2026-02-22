@@ -1,3 +1,7 @@
+Would be nice if you support me: https://buymeacoffee.com/bmks — thank you very much!!
+
+Important: Use at your own risk. You, the device owner, are responsible for any damage, data loss, or bricked devices.
+
 # spi-bridge
 
 Creates **multiple virtual device nodes** (e.g. `/dev/spi-bridge<BUS>.<0..N-1>`) that serialize and queue SPI operations.
