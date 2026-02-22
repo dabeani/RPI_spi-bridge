@@ -177,6 +177,40 @@ static long spibridge_forward_ioctl(struct file *backing_filp, unsigned int cmd,
 	return -ENOTTY;
 }
 
+static ssize_t spibridge_forward_read(struct file *backing_filp, char __user *buf, size_t len)
+{
+	const struct file_operations *fops;
+
+	if (!backing_filp)
+		return -ENODEV;
+
+	fops = backing_filp->f_op;
+	if (!fops)
+		return -ENODEV;
+
+	if (fops->read)
+		return fops->read(backing_filp, buf, len, &backing_filp->f_pos);
+
+	return -EINVAL;
+}
+
+static ssize_t spibridge_forward_write(struct file *backing_filp, const char __user *buf, size_t len)
+{
+	const struct file_operations *fops;
+
+	if (!backing_filp)
+		return -ENODEV;
+
+	fops = backing_filp->f_op;
+	if (!fops)
+		return -ENODEV;
+
+	if (fops->write)
+		return fops->write(backing_filp, buf, len, &backing_filp->f_pos);
+
+	return -EINVAL;
+}
+
 #ifdef CONFIG_COMPAT
 static long spibridge_forward_compat_ioctl(struct file *backing_filp, unsigned int cmd, unsigned long arg)
 {
@@ -257,6 +291,7 @@ static ssize_t spibridge_read(struct file *file, char __user *buf, size_t len, l
 	u64 ticket;
 	int rc;
 	ssize_t ret;
+	(void)ppos;
 
 	if (!fh || !fh->backing_filp)
 		return -ENODEV;
@@ -266,43 +301,7 @@ static ssize_t spibridge_read(struct file *file, char __user *buf, size_t len, l
 		return rc;
 
 	mutex_lock(&g_exec_mutex);
-	{
-		size_t remaining = len;
-		size_t chunk;
-		ssize_t got;
-		char *kbuf = NULL;
-		size_t max_chunk = PAGE_SIZE;
-		loff_t backing_pos = 0;
-
-		ret = 0;
-		while (remaining > 0) {
-			chunk = remaining > max_chunk ? max_chunk : remaining;
-			kbuf = kmalloc(chunk, GFP_KERNEL);
-			if (!kbuf) {
-				ret = -ENOMEM;
-				break;
-			}
-
-			got = kernel_read(fh->backing_filp, kbuf, chunk, &backing_pos);
-			if (got < 0) {
-				kfree(kbuf);
-				ret = got;
-				break;
-			}
-
-			if (copy_to_user(buf + ret, kbuf, got)) {
-				kfree(kbuf);
-				ret = -EFAULT;
-				break;
-			}
-
-			kfree(kbuf);
-			ret += got;
-			if ((size_t)got < chunk)
-				break; /* EOF */
-			remaining -= got;
-		}
-	}
+	ret = spibridge_forward_read(fh->backing_filp, buf, len);
 	mutex_unlock(&g_exec_mutex);
 
 	spibridge_queue_exit(ticket);
@@ -315,6 +314,7 @@ static ssize_t spibridge_write(struct file *file, const char __user *buf, size_t
 	u64 ticket;
 	int rc;
 	ssize_t ret;
+	(void)ppos;
 
 	if (!fh || !fh->backing_filp)
 		return -ENODEV;
@@ -324,42 +324,7 @@ static ssize_t spibridge_write(struct file *file, const char __user *buf, size_t
 		return rc;
 
 	mutex_lock(&g_exec_mutex);
-	{
-		size_t remaining = len;
-		size_t chunk;
-		ssize_t wrote;
-		char *kbuf = NULL;
-		size_t max_chunk = PAGE_SIZE;
-		loff_t backing_pos = 0;
-
-		ret = 0;
-		while (remaining > 0) {
-			chunk = remaining > max_chunk ? max_chunk : remaining;
-			kbuf = kmalloc(chunk, GFP_KERNEL);
-			if (!kbuf) {
-				ret = -ENOMEM;
-				break;
-			}
-
-			if (copy_from_user(kbuf, buf + ret, chunk)) {
-				kfree(kbuf);
-				ret = -EFAULT;
-				break;
-			}
-
-			wrote = kernel_write(fh->backing_filp, kbuf, chunk, &backing_pos);
-			kfree(kbuf);
-			if (wrote < 0) {
-				ret = wrote;
-				break;
-			}
-
-			ret += wrote;
-			if ((size_t)wrote < chunk)
-				break; /* short write */
-			remaining -= wrote;
-		}
-	}
+	ret = spibridge_forward_write(fh->backing_filp, buf, len);
 	mutex_unlock(&g_exec_mutex);
 
 	spibridge_queue_exit(ticket);
