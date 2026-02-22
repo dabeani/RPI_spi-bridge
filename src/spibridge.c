@@ -23,6 +23,7 @@
 #include <linux/atomic.h>
 #include <linux/uaccess.h>
 #include <linux/sched/signal.h>
+#include <linux/jiffies.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("spi-bridge");
@@ -60,6 +61,10 @@ static bool debug = false;
 module_param(debug, bool, 0644);
 MODULE_PARM_DESC(debug, "Enable debug logging for spibridge");
 
+static int owner_hold_ms = 5;
+module_param(owner_hold_ms, int, 0644);
+MODULE_PARM_DESC(owner_hold_ms, "Keep one virtual client as temporary owner for this many ms to reduce cross-client interleaving on shared backing; 0 disables");
+
 /* -------------------- Data structures -------------------- */
 
 struct spibridge_fh {
@@ -80,6 +85,10 @@ static atomic64_t g_next_ticket = ATOMIC64_INIT(0);
 static atomic64_t g_serving    = ATOMIC64_INIT(0);
 static wait_queue_head_t g_wq;
 
+static struct spibridge_fh *g_owner_fh;
+static unsigned long g_owner_until;
+static DEFINE_SPINLOCK(g_owner_lock);
+
 /* Why: guard backing device execution window, not just queue position */
 static DEFINE_MUTEX(g_exec_mutex);
 
@@ -87,7 +96,49 @@ static DEFINE_MUTEX(g_exec_mutex);
 
 static void spibridge_queue_exit(u64 my_ticket);
 
-static int spibridge_queue_enter(u64 *ticket_out)
+static bool spibridge_owner_allows(struct spibridge_fh *fh)
+{
+	bool allowed = true;
+	unsigned long flags;
+
+	if (owner_hold_ms <= 0)
+		return true;
+
+	spin_lock_irqsave(&g_owner_lock, flags);
+	if (g_owner_fh && time_after_eq(jiffies, g_owner_until))
+		g_owner_fh = NULL;
+
+	if (g_owner_fh && g_owner_fh != fh)
+		allowed = false;
+	spin_unlock_irqrestore(&g_owner_lock, flags);
+
+	return allowed;
+}
+
+static void spibridge_owner_touch(struct spibridge_fh *fh)
+{
+	unsigned long flags;
+
+	if (owner_hold_ms <= 0)
+		return;
+
+	spin_lock_irqsave(&g_owner_lock, flags);
+	g_owner_fh = fh;
+	g_owner_until = jiffies + msecs_to_jiffies(owner_hold_ms);
+	spin_unlock_irqrestore(&g_owner_lock, flags);
+}
+
+static void spibridge_owner_release(struct spibridge_fh *fh)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&g_owner_lock, flags);
+	if (g_owner_fh == fh)
+		g_owner_fh = NULL;
+	spin_unlock_irqrestore(&g_owner_lock, flags);
+}
+
+static int spibridge_queue_enter(struct spibridge_fh *fh, u64 *ticket_out)
 {
 	u64 my_ticket = (u64)atomic64_fetch_inc(&g_next_ticket);
 	int pending_err = 0;
@@ -100,23 +151,23 @@ static int spibridge_queue_enter(u64 *ticket_out)
 	for (;;) {
 		long rc;
 
-		if ((u64)atomic64_read(&g_serving) == my_ticket)
+		if ((u64)atomic64_read(&g_serving) == my_ticket && spibridge_owner_allows(fh))
 			break;
 
 		if (timeout_ms <= 0) {
 			rc = wait_event_interruptible(
 				g_wq,
-				(u64)atomic64_read(&g_serving) == my_ticket
+				((u64)atomic64_read(&g_serving) == my_ticket && spibridge_owner_allows(fh))
 			);
 		} else {
 			rc = wait_event_interruptible_timeout(
 				g_wq,
-				(u64)atomic64_read(&g_serving) == my_ticket,
+				((u64)atomic64_read(&g_serving) == my_ticket && spibridge_owner_allows(fh)),
 				msecs_to_jiffies(timeout_ms)
 			);
 		}
 
-		if ((u64)atomic64_read(&g_serving) == my_ticket)
+		if ((u64)atomic64_read(&g_serving) == my_ticket && spibridge_owner_allows(fh))
 			break;
 
 		if (rc == 0) {
@@ -143,6 +194,8 @@ static int spibridge_queue_enter(u64 *ticket_out)
 		spibridge_queue_exit(my_ticket);
 		return pending_err;
 	}
+
+	spibridge_owner_touch(fh);
 
 	return 0;
 }
@@ -279,6 +332,7 @@ static int spibridge_release(struct inode *inode, struct file *file)
 	if (fh) {
 		if (fh->backing_filp && !IS_ERR(fh->backing_filp))
 			filp_close(fh->backing_filp, NULL);
+		spibridge_owner_release(fh);
 		kfree(fh);
 	}
 
@@ -296,7 +350,7 @@ static ssize_t spibridge_read(struct file *file, char __user *buf, size_t len, l
 	if (!fh || !fh->backing_filp)
 		return -ENODEV;
 
-	rc = spibridge_queue_enter(&ticket);
+	rc = spibridge_queue_enter(fh, &ticket);
 	if (rc)
 		return rc;
 
@@ -319,7 +373,7 @@ static ssize_t spibridge_write(struct file *file, const char __user *buf, size_t
 	if (!fh || !fh->backing_filp)
 		return -ENODEV;
 
-	rc = spibridge_queue_enter(&ticket);
+	rc = spibridge_queue_enter(fh, &ticket);
 	if (rc)
 		return rc;
 
@@ -341,7 +395,7 @@ static long spibridge_ioctl(struct file *file, unsigned int cmd, unsigned long a
 	if (!fh || !fh->backing_filp)
 		return -ENODEV;
 
-	rc = spibridge_queue_enter(&ticket);
+	rc = spibridge_queue_enter(fh, &ticket);
 	if (rc)
 		return rc;
 
@@ -364,7 +418,7 @@ static long spibridge_compat_ioctl(struct file *file, unsigned int cmd, unsigned
 	if (!fh || !fh->backing_filp)
 		return -ENODEV;
 
-	rc = spibridge_queue_enter(&ticket);
+	rc = spibridge_queue_enter(fh, &ticket);
 	if (rc)
 		return rc;
 
