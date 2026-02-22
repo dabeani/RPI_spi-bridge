@@ -58,7 +58,26 @@ DEVNAME=spi-bridge
 BUS=0
 TIMEOUT_MS=30000
 PER_MINOR_BACKING=0
+OWNER_HOLD_MS=5
 ```
+
+### Recommended mode: two applications, one physical SPI slave (`/dev/spidev0.0`)
+
+Use this when app1 and app2 should both talk to the same slave via different virtual nodes:
+
+```ini
+BACKING=/dev/spidev0.0
+BUS=0
+NDEV=4
+PER_MINOR_BACKING=0
+OWNER_HOLD_MS=5
+```
+
+Then run app1 on `/dev/spi-bridge0.1` and app2 on `/dev/spi-bridge0.2`.
+
+- `OWNER_HOLD_MS=0`: pure FIFO switching on every operation
+- `OWNER_HOLD_MS=5..20`: reduces harmful interleaving between clients on the same slave
+- increase `OWNER_HOLD_MS` if two clients still disturb each other
 
 Apply:
 
@@ -80,6 +99,8 @@ Then mappings are:
 - `/dev/spi-bridge0.0` -> `/dev/spidev0.0`
 - `/dev/spi-bridge0.1` -> `/dev/spidev0.1`
 - `/dev/spi-bridge0.2` -> `/dev/spidev0.2`
+
+Use this only when those are truly different chip-select devices.
 
 ## Verify
 
@@ -103,6 +124,42 @@ newgrp spi
 Each operation (`read`, `write`, `ioctl`) enters a **strict FIFO ticket queue**.
 Only the current ticket may execute against the backing `/dev/spidevX.Y`.
 This prevents collisions and interleaving at the SPI-device level.
+
+With `OWNER_HOLD_MS > 0`, the active client gets a short temporary ownership window.
+This keeps short request bursts together and improves stability for stateful protocols on one shared slave.
+
+## Troubleshooting
+
+### One app works, two apps fail on shared backing
+
+1. Ensure shared mode is enabled:
+
+```ini
+PER_MINOR_BACKING=0
+BACKING=/dev/spidev0.0
+```
+
+2. Start with:
+
+```ini
+OWNER_HOLD_MS=5
+```
+
+3. If unstable, try `OWNER_HOLD_MS=10` or `20`.
+4. If startup appears blocked, temporarily set `OWNER_HOLD_MS=0` and compare behavior.
+5. Restart service after each change:
+
+```bash
+sudo systemctl restart spi-bridge.service
+```
+
+6. Verify current settings and module state:
+
+```bash
+cat /etc/spi-bridge/bridge.conf
+lsmod | grep spibridge
+dmesg --ctime | tail -n 100
+```
 
 ## Uninstall / purge
 
