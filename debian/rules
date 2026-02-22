@@ -6,8 +6,8 @@ override_dh_auto_build:
 	true
 
 override_dh_auto_install:
-	mkdir -p debian/spi-bridge/usr/src/spibridge-1.1/src
-	cp -a src/* debian/spi-bridge/usr/src/spibridge-1.1/src/
+	mkdir -p debian/spi-bridge/usr/src/spibridge-1.1
+	cp -a src/* debian/spi-bridge/usr/src/spibridge-1.1/
 	cp -a packaging/dkms.conf debian/spi-bridge/usr/src/spibridge-1.1/dkms.conf
 
 	mkdir -p debian/spi-bridge/etc/spi-bridge
