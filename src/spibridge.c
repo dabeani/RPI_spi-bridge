@@ -52,6 +52,10 @@ static int timeout_ms = 30000;
 module_param(timeout_ms, int, 0644);
 MODULE_PARM_DESC(timeout_ms, "Max time to wait in the FIFO queue per operation (ms), <=0 means wait forever");
 
+static bool debug = false;
+module_param(debug, bool, 0644);
+MODULE_PARM_DESC(debug, "Enable debug logging for spibridge");
+
 /* -------------------- Data structures -------------------- */
 
 struct spibridge_fh {
@@ -83,8 +87,13 @@ static int spibridge_queue_enter(u64 *ticket_out)
 
 	*ticket_out = my_ticket;
 
+	if (debug)
+		pr_info("spibridge: ticket %llu acquired\n", my_ticket);
+
 	if (timeout_ms <= 0) {
 		int rc = wait_event_interruptible(g_wq, (u64)atomic64_read(&g_serving) == my_ticket);
+		if (debug)
+			pr_info("spibridge: ticket %llu wait returned rc=%d\n", my_ticket, rc);
 		return rc; /* 0 or -ERESTARTSYS */
 	}
 
@@ -97,6 +106,8 @@ static int spibridge_queue_enter(u64 *ticket_out)
 		);
 
 		if (rc > 0)
+			if (debug)
+				pr_info("spibridge: ticket %llu granted (timeout)\n", my_ticket);
 			return 0;
 		if (rc == 0)
 			return -ETIMEDOUT;
@@ -110,6 +121,8 @@ static void spibridge_queue_exit(u64 my_ticket)
 	if ((u64)atomic64_read(&g_serving) == my_ticket) {
 		atomic64_inc(&g_serving);
 		wake_up_all(&g_wq);
+		if (debug)
+			pr_info("spibridge: ticket %llu completed, now serving %llu\n", my_ticket, (u64)atomic64_read(&g_serving));
 	}
 }
 
@@ -344,9 +357,12 @@ static int __init spibridge_init(void)
 		if (ret)
 			goto fail;
 
-		if (!device_create(g_class, NULL, devno, NULL, "%s%d.%d", devname, bus, i)) {
-			ret = -ENODEV;
-			goto fail;
+		{
+			struct device *d = device_create(g_class, NULL, devno, NULL, "%s%d.%d", devname, bus, i);
+			if (IS_ERR(d)) {
+				ret = PTR_ERR(d);
+				goto fail;
+			}
 		}
 	}
 
