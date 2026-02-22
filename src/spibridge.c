@@ -301,7 +301,7 @@ static const struct file_operations spibridge_fops = {
 	.compat_ioctl   = spibridge_compat_ioctl,
 #endif
 	.poll           = spibridge_poll,
-	.llseek         = no_llseek,
+	.llseek         = noop_llseek,
 };
 
 /* -------------------- Module init/exit -------------------- */
@@ -319,7 +319,7 @@ static int __init spibridge_init(void)
 	if (ret)
 		return ret;
 
-	g_class = class_create(THIS_MODULE, devname);
+	g_class = class_create(devname);
 	if (IS_ERR(g_class)) {
 		ret = PTR_ERR(g_class);
 		unregister_chrdev_region(g_base_devno, ndev);
