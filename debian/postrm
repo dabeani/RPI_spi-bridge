@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+case "$1" in
+  purge)
+    dkms remove -m spibridge -v 1.1 --all >/dev/null 2>&1 || true
+    rm -rf /etc/spi-bridge >/dev/null 2>&1 || true
+    ;;
+esac
+
+exit 0

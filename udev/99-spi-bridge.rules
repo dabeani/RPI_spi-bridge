@@ -1,0 +1,2 @@
+# Allow members of group "spi" to access spi-bridge devices
+KERNEL=="spi-bridge*.*", MODE="0660", GROUP="spi"

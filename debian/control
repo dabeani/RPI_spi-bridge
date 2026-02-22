@@ -1,0 +1,13 @@
+Source: spi-bridge
+Section: kernel
+Priority: optional
+Maintainer: spi-bridge <root@localhost>
+Build-Depends: debhelper-compat (= 13), dkms
+Standards-Version: 4.6.2
+Homepage: local
+
+Package: spi-bridge
+Architecture: all
+Depends: dkms, kmod, systemd
+Description: SPI bridge DKMS module + loader
+ Provides N virtual /dev nodes that serialize access to one backing /dev/spidevX.Y device.

@@ -1,0 +1,26 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+
+override_dh_auto_build:
+	true
+
+override_dh_auto_install:
+	mkdir -p debian/spi-bridge/usr/src/spibridge-1.1/src
+	cp -a src/* debian/spi-bridge/usr/src/spibridge-1.1/src/
+	cp -a packaging/dkms.conf debian/spi-bridge/usr/src/spibridge-1.1/dkms.conf
+
+	mkdir -p debian/spi-bridge/etc/spi-bridge
+	install -m 0644 etc/spi-bridge/bridge.conf debian/spi-bridge/etc/spi-bridge/bridge.conf
+
+	mkdir -p debian/spi-bridge/usr/sbin
+	install -m 0755 packaging/spi-bridge-load debian/spi-bridge/usr/sbin/spi-bridge-load
+
+	mkdir -p debian/spi-bridge/lib/systemd/system
+	install -m 0644 systemd/spi-bridge.service debian/spi-bridge/lib/systemd/system/spi-bridge.service
+
+	mkdir -p debian/spi-bridge/etc/udev/rules.d
+	install -m 0644 udev/99-spi-bridge.rules debian/spi-bridge/etc/udev/rules.d/99-spi-bridge.rules
+
+override_dh_installsystemd:
+	dh_installsystemd --name=spi-bridge

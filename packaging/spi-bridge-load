@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+CONF="/etc/spi-bridge/bridge.conf"
+
+BACKING="/dev/spidev0.0"
+NDEV="4"
+DEVNAME="spi-bridge"
+BUS="0"
+TIMEOUT_MS="30000"
+
+if [ -f "$CONF" ]; then
+  # shellcheck disable=SC1090
+  . "$CONF" || true
+fi
+
+BACKING="${BACKING:-/dev/spidev0.0}"
+NDEV="${NDEV:-4}"
+DEVNAME="${DEVNAME:-spi-bridge}"
+BUS="${BUS:-0}"
+TIMEOUT_MS="${TIMEOUT_MS:-30000}"
+
+if lsmod | grep -q "^spibridge"; then
+  modprobe -r spibridge || true
+fi
+
+exec modprobe spibridge "backing=${BACKING}" "ndev=${NDEV}" "devname=${DEVNAME}" "bus=${BUS}" "timeout_ms=${TIMEOUT_MS}"

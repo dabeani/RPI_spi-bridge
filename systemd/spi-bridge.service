@@ -1,0 +1,13 @@
+[Unit]
+Description=SPI bridge loader (virtual /dev nodes -> one backing spidev)
+After=systemd-modules-load.service
+Before=multi-user.target
+ConditionPathExists=/etc/spi-bridge/bridge.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/spi-bridge-load
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
