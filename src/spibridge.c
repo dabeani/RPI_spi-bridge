@@ -202,7 +202,7 @@ static ssize_t spibridge_read(struct file *file, char __user *buf, size_t len, l
 		return rc;
 
 	mutex_lock(&g_exec_mutex);
-	ret = vfs_read(fh->backing_filp, buf, len, ppos);
+	ret = kernel_read(fh->backing_filp, buf, len, ppos);
 	mutex_unlock(&g_exec_mutex);
 
 	spibridge_queue_exit(ticket);
@@ -224,7 +224,7 @@ static ssize_t spibridge_write(struct file *file, const char __user *buf, size_t
 		return rc;
 
 	mutex_lock(&g_exec_mutex);
-	ret = vfs_write(fh->backing_filp, buf, len, ppos);
+	ret = kernel_write(fh->backing_filp, buf, len, ppos);
 	mutex_unlock(&g_exec_mutex);
 
 	spibridge_queue_exit(ticket);
