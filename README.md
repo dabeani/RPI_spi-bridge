@@ -1,6 +1,7 @@
 # spi-bridge
 
-Creates **multiple virtual device nodes** (e.g. `/dev/spi-bridge<BUS>.<0..N-1>`) that **serialize** and **queue** all SPI operations onto **one backing** SPI device (e.g. `/dev/spidev0.0`).
+Creates **multiple virtual device nodes** (e.g. `/dev/spi-bridge<BUS>.<0..N-1>`) that serialize and queue SPI operations.
+By default all virtual nodes use one backing SPI device (for strict single-device arbitration), and optionally each virtual index can map to its own chip-select.
 
 ## Pre-build requirements (apt-get)
 
@@ -56,6 +57,7 @@ NDEV=6
 DEVNAME=spi-bridge
 BUS=0
 TIMEOUT_MS=30000
+PER_MINOR_BACKING=0
 ```
 
 Apply:
@@ -63,6 +65,21 @@ Apply:
 ```bash
 sudo systemctl restart spi-bridge.service
 ```
+
+### Map each virtual node to a different CS
+
+If you want `/dev/spi-bridge0.1` and `/dev/spi-bridge0.2` to target different chip-selects, set:
+
+```ini
+BUS=0
+PER_MINOR_BACKING=1
+```
+
+Then mappings are:
+
+- `/dev/spi-bridge0.0` -> `/dev/spidev0.0`
+- `/dev/spi-bridge0.1` -> `/dev/spidev0.1`
+- `/dev/spi-bridge0.2` -> `/dev/spidev0.2`
 
 ## Verify
 

@@ -47,6 +47,10 @@ static int bus = 0;
 module_param(bus, int, 0644);
 MODULE_PARM_DESC(bus, "Bus number used only for naming (e.g., bus=0 -> /dev/spi-bridge0.<n>)");
 
+static bool per_minor_backing = false;
+module_param(per_minor_backing, bool, 0644);
+MODULE_PARM_DESC(per_minor_backing, "If true, each /dev/<devname><bus>.<n> maps to /dev/spidev<bus>.<n> instead of one shared backing");
+
 
 static int timeout_ms = 30000;
 module_param(timeout_ms, int, 0644);
@@ -201,15 +205,34 @@ static long spibridge_forward_compat_ioctl(struct file *backing_filp, unsigned i
 static int spibridge_open(struct inode *inode, struct file *file)
 {
 	struct spibridge_fh *fh = kzalloc(sizeof(*fh), GFP_KERNEL);
+	const char *selected_backing = backing;
+	char backing_path[64];
+	int idx;
 	if (!fh)
 		return -ENOMEM;
 
-	fh->backing_filp = filp_open(backing, file->f_flags, 0);
+	idx = iminor(inode) - MINOR(g_base_devno);
+	if (idx < 0 || idx >= ndev) {
+		kfree(fh);
+		return -ENODEV;
+	}
+
+	if (per_minor_backing) {
+		scnprintf(backing_path, sizeof(backing_path), "/dev/spidev%d.%d", bus, idx);
+		selected_backing = backing_path;
+	}
+
+	fh->backing_filp = filp_open(selected_backing, file->f_flags, 0);
 	if (IS_ERR(fh->backing_filp)) {
 		int err = PTR_ERR(fh->backing_filp);
+		if (debug)
+			pr_info("spibridge: open failed idx=%d path=%s err=%d\n", idx, selected_backing, err);
 		kfree(fh);
 		return err;
 	}
+
+	if (debug)
+		pr_info("spibridge: open idx=%d -> %s\n", idx, selected_backing);
 
 	file->private_data = fh;
 	return 0;

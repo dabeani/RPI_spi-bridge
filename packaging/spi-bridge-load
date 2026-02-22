@@ -8,6 +8,7 @@ NDEV="4"
 DEVNAME="spi-bridge"
 BUS="0"
 TIMEOUT_MS="30000"
+PER_MINOR_BACKING="0"
 
 if [ -f "$CONF" ]; then
   # shellcheck disable=SC1090
@@ -19,9 +20,10 @@ NDEV="${NDEV:-4}"
 DEVNAME="${DEVNAME:-spi-bridge}"
 BUS="${BUS:-0}"
 TIMEOUT_MS="${TIMEOUT_MS:-30000}"
+PER_MINOR_BACKING="${PER_MINOR_BACKING:-0}"
 
 if lsmod | grep -q "^spibridge"; then
   modprobe -r spibridge || true
 fi
 
-exec modprobe spibridge "backing=${BACKING}" "ndev=${NDEV}" "devname=${DEVNAME}" "bus=${BUS}" "timeout_ms=${TIMEOUT_MS}"
+exec modprobe spibridge "backing=${BACKING}" "ndev=${NDEV}" "devname=${DEVNAME}" "bus=${BUS}" "timeout_ms=${TIMEOUT_MS}" "per_minor_backing=${PER_MINOR_BACKING}"
