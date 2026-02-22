@@ -221,6 +221,7 @@ static ssize_t spibridge_read(struct file *file, char __user *buf, size_t len, l
 		ssize_t got;
 		char *kbuf = NULL;
 		size_t max_chunk = PAGE_SIZE;
+		loff_t backing_pos = 0;
 
 		ret = 0;
 		while (remaining > 0) {
@@ -231,7 +232,7 @@ static ssize_t spibridge_read(struct file *file, char __user *buf, size_t len, l
 				break;
 			}
 
-			got = kernel_read(fh->backing_filp, kbuf, chunk, ppos);
+			got = kernel_read(fh->backing_filp, kbuf, chunk, &backing_pos);
 			if (got < 0) {
 				kfree(kbuf);
 				ret = got;
@@ -278,6 +279,7 @@ static ssize_t spibridge_write(struct file *file, const char __user *buf, size_t
 		ssize_t wrote;
 		char *kbuf = NULL;
 		size_t max_chunk = PAGE_SIZE;
+		loff_t backing_pos = 0;
 
 		ret = 0;
 		while (remaining > 0) {
@@ -294,7 +296,7 @@ static ssize_t spibridge_write(struct file *file, const char __user *buf, size_t
 				break;
 			}
 
-			wrote = kernel_write(fh->backing_filp, kbuf, chunk, ppos);
+			wrote = kernel_write(fh->backing_filp, kbuf, chunk, &backing_pos);
 			kfree(kbuf);
 			if (wrote < 0) {
 				ret = wrote;
