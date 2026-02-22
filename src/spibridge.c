@@ -210,11 +210,25 @@ static ssize_t spibridge_read(struct file *file, char __user *buf, size_t len, l
 	if (!fh || !fh->backing_filp)
 		return -ENODEV;
 
+	if (debug) {
+		int dev_minor = MINOR(file->f_inode->i_rdev);
+		pr_info("spibridge[%d][pid=%d]: requesting ticket for read len=%zu\n", dev_minor, current->pid, len);
+	}
+
 	rc = spibridge_queue_enter(&ticket);
 	if (rc)
 		return rc;
 
+	if (debug) {
+		int dev_minor = MINOR(file->f_inode->i_rdev);
+		pr_info("spibridge[%d][pid=%d]: ticket %llu granted for read len=%zu\n", dev_minor, current->pid, ticket, len);
+	}
+
 	mutex_lock(&g_exec_mutex);
+	if (debug) {
+		int dev_minor = MINOR(file->f_inode->i_rdev);
+		pr_info("spibridge[%d][pid=%d]: entering critical read section\n", dev_minor, current->pid);
+	}
 	{
 		size_t remaining = len;
 		size_t chunk;
@@ -232,7 +246,17 @@ static ssize_t spibridge_read(struct file *file, char __user *buf, size_t len, l
 				break;
 			}
 
+			if (debug) {
+				int dev_minor = MINOR(file->f_inode->i_rdev);
+				pr_info("spibridge[%d][pid=%d]: kernel_read chunk=%zu backing_pos=%lld\n", dev_minor, current->pid, chunk, (long long)backing_pos);
+			}
+
 			got = kernel_read(fh->backing_filp, kbuf, chunk, &backing_pos);
+
+			if (debug) {
+				int dev_minor = MINOR(file->f_inode->i_rdev);
+				pr_info("spibridge[%d][pid=%d]: kernel_read returned %zd backing_pos=%lld\n", dev_minor, current->pid, got, (long long)backing_pos);
+			}
 			if (got < 0) {
 				kfree(kbuf);
 				ret = got;
@@ -252,6 +276,10 @@ static ssize_t spibridge_read(struct file *file, char __user *buf, size_t len, l
 			remaining -= got;
 		}
 	}
+	if (debug) {
+		int dev_minor = MINOR(file->f_inode->i_rdev);
+		pr_info("spibridge[%d][pid=%d]: leaving critical read section ret=%zd\n", dev_minor, current->pid, ret);
+	}
 	mutex_unlock(&g_exec_mutex);
 
 	spibridge_queue_exit(ticket);
@@ -268,11 +296,25 @@ static ssize_t spibridge_write(struct file *file, const char __user *buf, size_t
 	if (!fh || !fh->backing_filp)
 		return -ENODEV;
 
+	if (debug) {
+		int dev_minor = MINOR(file->f_inode->i_rdev);
+		pr_info("spibridge[%d][pid=%d]: requesting ticket for write len=%zu\n", dev_minor, current->pid, len);
+	}
+
 	rc = spibridge_queue_enter(&ticket);
 	if (rc)
 		return rc;
 
+	if (debug) {
+		int dev_minor = MINOR(file->f_inode->i_rdev);
+		pr_info("spibridge[%d][pid=%d]: ticket %llu granted for write len=%zu\n", dev_minor, current->pid, ticket, len);
+	}
+
 	mutex_lock(&g_exec_mutex);
+	if (debug) {
+		int dev_minor = MINOR(file->f_inode->i_rdev);
+		pr_info("spibridge[%d][pid=%d]: entering critical write section\n", dev_minor, current->pid);
+	}
 	{
 		size_t remaining = len;
 		size_t chunk;
@@ -296,7 +338,17 @@ static ssize_t spibridge_write(struct file *file, const char __user *buf, size_t
 				break;
 			}
 
+			if (debug) {
+				int dev_minor = MINOR(file->f_inode->i_rdev);
+				pr_info("spibridge[%d][pid=%d]: kernel_write chunk=%zu backing_pos=%lld\n", dev_minor, current->pid, chunk, (long long)backing_pos);
+			}
+
 			wrote = kernel_write(fh->backing_filp, kbuf, chunk, &backing_pos);
+
+			if (debug) {
+				int dev_minor = MINOR(file->f_inode->i_rdev];
+				pr_info("spibridge[%d][pid=%d]: kernel_write returned %zd backing_pos=%lld\n", dev_minor, current->pid, wrote, (long long)backing_pos);
+			}
 			kfree(kbuf);
 			if (wrote < 0) {
 				ret = wrote;
@@ -308,6 +360,10 @@ static ssize_t spibridge_write(struct file *file, const char __user *buf, size_t
 				break; /* short write */
 			remaining -= wrote;
 		}
+	}
+	if (debug) {
+		int dev_minor = MINOR(file->f_inode->i_rdev);
+		pr_info("spibridge[%d][pid=%d]: leaving critical write section ret=%zd\n", dev_minor, current->pid, ret);
 	}
 	mutex_unlock(&g_exec_mutex);
 
