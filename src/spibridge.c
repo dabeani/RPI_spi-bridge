@@ -142,41 +142,57 @@ static int spibridge_queue_enter(struct spibridge_fh *fh, u64 *ticket_out)
 {
 	u64 my_ticket = (u64)atomic64_fetch_inc(&g_next_ticket);
 	int pending_err = 0;
+	unsigned long deadline = 0;
 
 	*ticket_out = my_ticket;
+
+	if (timeout_ms > 0)
+		deadline = jiffies + msecs_to_jiffies(timeout_ms);
 
 	if (debug)
 		pr_info("spibridge: ticket %llu acquired\n", my_ticket);
 
 	for (;;) {
 		long rc;
+		unsigned long wait_j = msecs_to_jiffies(100);
 
 		if ((u64)atomic64_read(&g_serving) == my_ticket && spibridge_owner_allows(fh))
 			break;
 
-		if (timeout_ms <= 0) {
-			rc = wait_event_interruptible(
-				g_wq,
-				((u64)atomic64_read(&g_serving) == my_ticket && spibridge_owner_allows(fh))
-			);
-		} else {
-			rc = wait_event_interruptible_timeout(
-				g_wq,
-				((u64)atomic64_read(&g_serving) == my_ticket && spibridge_owner_allows(fh)),
-				msecs_to_jiffies(timeout_ms)
-			);
+		if (owner_hold_ms > 0) {
+			unsigned long owner_j = msecs_to_jiffies(owner_hold_ms);
+			if (owner_j > 0 && owner_j < wait_j)
+				wait_j = owner_j;
 		}
 
+		if (timeout_ms > 0) {
+			if (time_after_eq(jiffies, deadline)) {
+				if (!pending_err)
+					pending_err = -ETIMEDOUT;
+				continue;
+			}
+
+			{
+				unsigned long remaining = deadline - jiffies;
+				if (remaining < wait_j)
+					wait_j = remaining;
+			}
+		}
+
+		if (wait_j == 0)
+			wait_j = 1;
+
+		rc = wait_event_interruptible_timeout(
+			g_wq,
+			((u64)atomic64_read(&g_serving) == my_ticket && spibridge_owner_allows(fh)),
+			wait_j
+		);
+
 		if ((u64)atomic64_read(&g_serving) == my_ticket && spibridge_owner_allows(fh))
 			break;
 
-		if (rc == 0) {
-			if (!pending_err)
-				pending_err = -ETIMEDOUT;
-			if (debug)
-				pr_info("spibridge: ticket %llu timeout while queued, waiting to retire ticket\n", my_ticket);
+		if (rc == 0)
 			continue;
-		}
 
 		if (rc < 0) {
 			if (!pending_err)
